@@ -1,10 +1,9 @@
-function parse_ripple(filenames,hours_offset,remove_chs,macro,max_memo_GB, overwrite, channels)
+function parse_ripple(filenames,remove_chs,macro,max_memo_GB, overwrite, channels)
 
 % This code requires the neuroshape library in the path.
 % max_memo_GB is an idea of the number of GB allocated for the data to be
 % stored in RAM, so it is used to compute the number of segments in which
 % the data should be split for processing
-if ~exist('hours_offset','var')|| isempty(hours_offset), hours_offset = 0; end % time difference with Coordinated Universal Time (UTC)
 
 if ~exist('filenames','var')
    aux=dir('*.ns5');
@@ -35,36 +34,30 @@ end
 if ~exist('remove_chs','var')
     remove_chs = [];
 end
+with_memory=true;
 
-if ispc
-    [~, systemview] = memory;
-    memo_available = floor(systemview.PhysicalMemory.Available*0.80);
-elseif isunix
-    command='(free -h | awk ''/^Mem:/ {print $7}'')';
-    [status,cmdout] = system(command);
-    if status == 0
-        memo_available = floor(str2double(cmdout(1:end-3))*0.8)*(1024)^3;
-    else
-        memo_available = 12*(1024)^3; % reduce if necessary
-    end
-else
-    memo_available = 12*(1024)^3; % reduce if necessary
-%     command='(top -l 1 | grep PhysMem: | awk ''{print $6}'')';
-%     [status,cmdout] = system(command);
-%     if status == 0
-%         memo_available = floor(str2double(cmdout(1:end-3))*0.8)*(1024)^3;
-%     else
-%         memo_available = 12*(1024)^3; % reduce if necessary
-%     end
+try
+	memory;
+catch
+	with_memory=false;
 end
-
-if exist('max_memo_GB','var') && ~isempty(max_memo_GB)
-    max_memo = max_memo_GB*(1024)^3;
-    if max_memo > memo_available
-        error('max_memo_GB > 80% of Physical Memory Available')
-    end
+if with_memory
+	[~, systemview] = memory;
+	memo_avaible = floor(systemview.PhysicalMemory.Available*0.80);
+	if exist('max_memo_GB','var') && ~isempty(max_memo_GB)
+        max_memo = max_memo_GB*(1024)^3;
+		if max_memo > memo_avaible
+			error('max_memo_GB > 80% of Physical Memory Available')
+		end
+	else
+		max_memo = memo_avaible;
+	end
 else
-    max_memo = memo_available;
+    if ~exist('max_memo_GB','var') || isempty(max_memo_GB)
+        warning('max_memo_GB must be set. Setting max memo as 8GB')
+        max_memo_GB = 8;
+	end
+	max_memo = max_memo_GB*(1024)^3;
 end
 
 tcum=0;
@@ -73,7 +66,7 @@ if ischar(filenames)
     filenames = {filenames};
 end
 
-% formatvector=@(v,f) sprintf(['[' repmat(['%' f ', '], 1, numel(v)-1), ['%' f ']\n']  ],v);
+formatvector=@(v,f) sprintf(['[' repmat(['%' f ', '], 1, numel(v)-1), ['%' f ']\n']  ],v);
 
 metadata_file = fullfile(pwd, 'NSx.mat');
 if exist(metadata_file,'file')
@@ -93,34 +86,7 @@ for fi = 1:length(filenames)
     end
     
     tic
-     [ns_status, hFile] = ns_OpenFile(filenames{1}, 'single');  
-%     [ns_status, hFile] = ns_OpenFile(filename, 'single');
-%     [ns_status_nev, hFile_nev] = ns_OpenFile([filename(1:end-3) 'nev'], 'single');
-%     [ns_RESULT, nsFileInfo] = ns_GetFileInfo(hFile_nev);
-    
-    fid = fopen(filenames{1}, 'rb');
-%     fid = fopen([filename(1:end-3) 'nev'], 'rb');
-    fseek(fid, 294, -1);
-%     fseek(fid, 28, -1);
-    Date = fread(fid, 8, 'uint16');
-%     nsFileInfo.Time_Year = Date(1);
-%     nsFileInfo.Time_Month = Date(2);
-%     nsFileInfo.Time_Day = Date(4);
-%     nsFileInfo.Time_Hour = Date(5);
-%     nsFileInfo.Time_Min = Date(6);
-%     nsFileInfo.Time_Sec = Date(7);
-    
-
-    Start_Time = datetime([Date(1:2);Date(4:7)]')-hours(hours_offset); 
-%     Date_Time = sprintf('%d/%d/%d %d:%d:%d',Date(2),Date(4),Date(1),Date(5),Date(6),Date(7));
-%     Date_Time = sprintf('%d/%d/%d %d:%d:%d',nsFileInfo.Time_Month,nsFileInfo.Time_Day,nsFileInfo.Time_Year,nsFileInfo.Time_Hour,nsFileInfo.Time_Min,nsFileInfo.Time_Sec);
-
-    Rec_length_sec = hFile.TimeSpan/30000;
-%     End_Time = datestr(datenum(Start_Time) + Rec_length_sec/86400, 'mm/dd/yyyy HH:MM:SS');
-    End_Time = Start_Time + seconds(Rec_length_sec);
-
-    Date_Time = [Start_Time;End_Time];
-    
+    [ns_status, hFile] = ns_OpenFile(filename, 'single');
     if strcmp(ns_status,'ns_FILEERROR')
         error('Unable to open file: %s',filename)
     end
@@ -150,7 +116,7 @@ for fi = 1:length(filenames)
         chs_info.conversion = cell2mat({hFile.Entity.Scale});
         chs_info.id = cell2mat({hFile.Entity.ElectrodeID});
         chs_info.pak_list = 0*chs_info.id;
-        chs_info.dc= double(0*chs_info.id);
+        
         chs_info.macro = chs_info.label;
         micros = cellfun(@(x) strcmp(x,'uV'),chs_info.unit);
         if ~isempty(macro)
@@ -165,15 +131,6 @@ for fi = 1:length(filenames)
         if ~exist('channels','var') || isempty(channels)
             channels = hFile.FileInfo.ElectrodeList;
         end
-
-        remove_channels_by_label = {'(ref(.*))$'};
-        for ci=1:numel(channels)
-            if ~isempty(regexp(chs_info.label{ci},remove_channels_by_label{1},'match'))
-                remove_chs = [remove_chs channels(ci)];
-            end
-        end
-        remove_chs = unique(remove_chs);
-
         if ~isempty(remove_chs)
             channels = setdiff(channels, remove_chs);
         end
@@ -222,48 +179,30 @@ for fi = 1:length(filenames)
     end
    
     %total lenght adding the zeros from Timestamp
-    lts = hFile.TimeSpan/(30000/sr);
+    lts = hFile.TimeSpan;
     new_files(fi).lts = lts;
 
     N = lts;   % total data points
     num_segments = ceil(N/samples_per_channel);
-    samples_per_segment = min(samples_per_channel,N);
-    fprintf('Data will be processed in %d segments of %d samples each.\n',num_segments,samples_per_segment)
+    fprintf('Data will be processed in %d segments of %d samples each.\n',num_segments,min(samples_per_channel,N))
     
     min_valid_val = zeros([nchan,1]);
-    max_valid_val = zeros([nchan,1]);
     for i = 1:nchan
-        [~, nsAnalogInfo] = ns_GetAnalogInfo(hFile, i); %ns5: min -8191 max 8191 resol 0.25; nf3 min 0 max 17920 resol 1 
+        [~, nsAnalogInfo] = ns_GetAnalogInfo(hFile, i);
         min_valid_val(i) = nsAnalogInfo.MinVal/nsAnalogInfo.Resolution;
-        max_valid_val(i) = nsAnalogInfo.MaxVal/nsAnalogInfo.Resolution;
     end
     
     for j=1:num_segments
-        ini = (j-1)*samples_per_segment+1;
-        fin = min(j*samples_per_segment,N);
+        ini = (j-1)*samples_per_channel+1;
+        fin = min(j*samples_per_channel,N);
         tcum = tcum + toc;  % this is because openNSx has a tic at the beginning
-        [~, Data] = ns_GetAnalogDataBlock(hFile, [1:nchan], ini, fin-ini+1, 'unscale'); %ns5 Data is int16, ns3 Data is single
+        [~, Data] = ns_GetAnalogDataBlock(hFile, [1:nchan], ini, fin-ini+1, 'unscale');
         for i = 1:nchan
             if ~isempty(outfile_handles{i}) %channels with empty outfile_handles{i} are not selected
-                if sr==30000
-%                     pak_lost = Data(:,i)<min_valid_val(i);
-                    pak_lost = Data(:,i) == intmin('int16');
-                    Data(pak_lost,i)=0;
-                    chs_info.pak_list(i) = chs_info.pak_list(i)+sum(pak_lost);  
-                else
-%                     pak_lost = Data(:,i) > 3e+38; % maximum value for a single-precision floating-point number 
-                    pak_lost = Data(:,i) == realmax('single');
-                    Data(pak_lost,i)=0;
-                    chs_info.pak_list(i) = chs_info.pak_list(i)+sum(pak_lost);
-                end
-                Data_ch = double(Data(:,i));
-                if sr~=30000
-                    chs_info.dc(i)=(max(Data_ch)+min(Data_ch))/2;
-                    Data_ch=Data_ch- chs_info.dc(i);
-                    chs_info.conversion(i) = max(abs(Data_ch))/double(intmax('int16'));
-                    Data_ch = round(Data_ch/chs_info.conversion(i));
-                end
-                fwrite(outfile_handles{i},int16(Data_ch),'int16');
+                pak_lost = Data(1:end,i)<min_valid_val(i);
+                Data(pak_lost,i)=0;
+                chs_info.pak_list(i) = chs_info.pak_list(i)+sum(pak_lost);
+                fwrite(outfile_handles{i},Data(1:end,i),'int16');
             end
         end
         fprintf('Segment %d out of %d processed. ',j,num_segments)
@@ -299,10 +238,8 @@ for ci = 1:length(new_channel_id)
         ix = chs_info.id==elec_id;
         NSx(pos).chan_ID = ch;
         NSx(pos).conversion = chs_info.conversion(ix);
-        NSx(pos).dc = chs_info.dc(ix);
         NSx(pos).label = chs_info.label{ix};
-        NSx(pos).bundle = get_bundle(chs_info.macro{ix});
-        NSx(pos).is_micro = NSx(pos).label(1)=='m';
+        NSx(pos).macro = get_macro(chs_info.macro{ix});
         NSx(pos).unit = chs_info.unit{ix};
         NSx(pos).electrode_ID = elec_id;
         NSx(pos).which_system = 'RIPPLE';
@@ -311,7 +248,6 @@ for ci = 1:length(new_channel_id)
         NSx(pos).filename = filenames;
         NSx(pos).sr = sr;
         NSx(pos).output_name = chs_info.output_name{ix};
-        NSx(pos).pak_list =chs_info.pak_list(ix);
 end
 
 for i = 1:length(new_files)
@@ -326,21 +262,15 @@ for i = 1:length(new_files)
     files(pos).lts = new_files(i).lts;
 end
 freq_priority=[30000, 2000, 10000, 1000, 500];
-save(metadata_file, 'NSx','files','freq_priority','Date_Time')
+save(metadata_file, 'NSx','files','freq_priority')
 custom_path.rm()
 end
 
-function bundle=get_bundle(label)
-    tt = regexp(label,'\d+','once');
-    if ~isempty(tt)
-        bundle = label(1:tt-1);
+function macro=get_macro(label)
+    macro = regexp(label,'^\w*(?=(\d* raw$))','match');
+    if ~isempty(macro)
+        macro = macro{1};
     else
-        bundle = label;
-    end    
-%     macro = regexp(label,'^\w*(?=(\d* raw$))','match');
-%     if ~isempty(macro)
-%         macro = macro{1};
-%     else
-%         macro = label;
-%     end
+        macro = label;
+    end
 end

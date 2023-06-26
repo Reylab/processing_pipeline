@@ -85,7 +85,7 @@ class NSXRecordingExtractor(BaseRecording):
         self.set_property("probe", probes)
         self.set_property("channel", det_channels)
 
-        labels_wm =  [re.sub('\d*-\d*','',x) for x in labels]
+        labels_wm =  [re.sub(r'\d*-\d*','',x) for x in labels]
 
         macros = {a:[i,b,0] for i,[a,b] in enumerate(zip(*np.unique(labels_wm,return_counts=True)))}
         nmacros = len(macros)

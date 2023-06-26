@@ -8,6 +8,7 @@ function new_check_lfp_power_NSX(channels, varargin)
     p.addParameter('direc_resus_base',pwd);
     p.addParameter('resus_folder_name','spectra');
     p.addParameter('direc_raw',pwd);
+    p.addParameter('with_NoNotch',false);
     p.addParameter('time_plot_duration',1); %minutes
     p.addParameter('freq_line',60); %Hz
     p.addParameter('parallel',false);
@@ -186,6 +187,9 @@ function info=new_check_lfp_power(channel,par,conf_table,NSx,freq_priority)
     end
     [pxx_filtered,fs_filtered] = pwelch(x(end+1-samples_spectrum:end),barthannwin(N),0,[],sr,'onesided');
     
+    if par.with_NoNotch
+        x_NoNotch = x;
+    end
     pxx_db = 10*log10(pxx_filtered);
     pxx_slideavg = movmedian(pxx_db,par.span_smooth);
     pxx_thr_db = pxx_slideavg+par.db_thr;   
@@ -399,6 +403,10 @@ function info=new_check_lfp_power(channel,par,conf_table,NSx,freq_priority)
     if ~nofilter
 
         set(fig,'CurrentAxes',figs.filttime_ax)
+        if par.with_NoNotch
+            plot(linspace(0,samples_timeplot/sr,samples_timeplot),x_NoNotch(end+1-samples_timeplot:end))
+            hold on
+        end
         plot(linspace(0,samples_timeplot/sr,samples_timeplot),x(end+1-samples_timeplot:end),'r')
 
         if ~isempty(conf.threshold)
@@ -406,6 +414,12 @@ function info=new_check_lfp_power(channel,par,conf_table,NSx,freq_priority)
             thr = conf.threshold *sigma;
             yline(thr,'b','LineWidth',1.2);
             yline(-thr,'b','LineWidth',1.2);
+            if par.with_NoNotch
+                sigma_NoNotch = median(abs(x_NoNotch))/0.6745;
+                thr_NoNotch = conf.threshold *sigma_NoNotch;
+                yline(thr_NoNotch,'k','LineWidth',1);
+                yline(-thr_NoNotch,'k','LineWidth',1);
+            end
             extra_title = [extra_title sprintf('Thr = sigma*%.1f = %.2f %s. Power at ',conf.threshold,thr,conf.unit)];
             for iii=1:numel(par.freqs_comp)
                 extra_title = [extra_title sprintf('%.1f, ',par.freqs_comp(iii)/1000)];
@@ -418,6 +432,7 @@ function info=new_check_lfp_power(channel,par,conf_table,NSx,freq_priority)
         end
 
         grid minor
+        box on
         xlabel('Time (sec)','fontsize',11)
         ylabel({'Filtered',conf.unit},'fontsize',11)
         set(gca,'fontsize',12)
